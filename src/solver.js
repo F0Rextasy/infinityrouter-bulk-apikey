@@ -55,8 +55,19 @@ const freePort = () => new Promise((resolve, reject) => {
   srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); });
 });
 
-/** `http://host:port` (or null) for Chrome's --proxy-server. */
-const proxyArg = (p) => (p ? String(p) : null);
+/** `http://host:port` (or null) for Chrome's --proxy-server. Chrome takes no
+ *  userinfo in that URL (`net::ERR_NO_SUPPORTED_PROXIES`), so credentials are
+ *  split out here and carried by the Fetch domain instead (see Page.proxyAuth). */
+const proxyParts = (p) => {
+  const s = typeof p === 'string' ? p.trim() : p && p.host ? `${p.protocol}://${p.host}:${p.port}` : '';
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    return { server: `${u.protocol}//${u.host}`, username: decodeURIComponent(u.username || ''), password: decodeURIComponent(u.password || '') };
+  } catch (e) {
+    return { server: s, username: '', password: '' };
+  }
+};
 
 /** Headful Chrome pinned to one exit. A fresh profile per run keeps sessions clean. */
 async function launchChrome(proxy, port, { headless = false, chrome = '' } = {}) {
@@ -71,8 +82,8 @@ async function launchChrome(proxy, port, { headless = false, chrome = '' } = {})
     // Cloudflare localises its interstitial to the browser language: pin it.
     '--lang=en-US',
   ];
-  const px = proxyArg(proxy);
-  if (px) args.push(`--proxy-server=${px}`);
+  const px = proxyParts(proxy);
+  if (px) args.push(`--proxy-server=${px.server}`);
   if (headless) args.push('--headless=new');
   args.push('about:blank');
   const child = spawn(bin, args, { stdio: 'ignore', detached: false });
@@ -158,7 +169,7 @@ class Cdp {
 class Page {
   constructor(cdp) { this.cdp = cdp; }
 
-  static async open(port) {
+  static async open(port, proxy = null) {
     const http = require('http');
     const json = (method, p) => new Promise((resolve, reject) => {
       const req = http.request({ host: '127.0.0.1', port, path: p, method, timeout: 5000 }, (res) => {
@@ -175,8 +186,23 @@ class Page {
     if (!target || !target.webSocketDebuggerUrl) throw new Error('could not open a Chrome tab');
     const page = new Page(await Cdp.connect(target.webSocketDebuggerUrl));
     await page.cdp.send('Page.enable');
+    await page.proxyAuth(proxy);
     page.targetId = target.id;
     return page;
+  }
+
+  /** Chrome sends no userinfo from `--proxy-server`: a credentialed exit's 407 is
+   *  answered on this page's own session (Fetch.authRequired → ProvideCredentials). */
+  async proxyAuth(proxy) {
+    const px = proxyParts(proxy);
+    if (!px || !px.username) return;
+    this.cdp.on('Fetch.authRequired', (p) => this.cdp.send('Fetch.continueWithAuth', {
+      requestId: p.requestId,
+      authChallengeResponse: { response: 'ProvideCredentials', username: px.username, password: px.password },
+    }).catch(() => {}));
+    this.cdp.on('Fetch.requestPaused', (p) => this.cdp.send('Fetch.continueRequest', { requestId: p.requestId }).catch(() => {}));
+    await this.cdp.send('Fetch.enable', { handleAuthRequests: true });
+    log(`proxy auth via Fetch.handleAuthRequests (${px.server})`);
   }
 
   async eval(expression, timeoutMs = 60000) {
@@ -320,7 +346,7 @@ async function solveCaptcha({ type = 'turnstile', sitekey, url = 'https://infini
   const chrome = await launchChrome(proxy, port);
   let page = null;
   try {
-    page = await Page.open(port);
+    page = await Page.open(port, proxy);
     await page.goto(url, { waitMs: 3500 });
     const { token } = await obtainToken(page.cdp, page, sitekey, 'auto');
     if (!token) throw new Error('solveCaptcha: Turnstile token empty — Cloudflare did not clear (headful Chrome is required)');

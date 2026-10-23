@@ -173,15 +173,18 @@ const msgOf = (r) =>
   String(r.text || '').slice(0, 200);
 
 // -------------------------------------------------------------------- exits
-/** `protocol://host:port` (http / socks5 / socks4). Credentials are not supported. */
+/** `[scheme://][user:pass@]host:port` (http / socks5 / socks4). Credentials never
+ *  travel in `--proxy-server`: they are answered over CDP (solver Page.proxyAuth). */
 function parseProxy(line) {
   const s = String(line).trim().split(/\s+/)[0];
-  const m = s.match(/^(?:(https?|socks5h?|socks4a?):\/\/)?([^:/@\s]+):(\d+)$/);
+  const m = s.match(/^(?:(https?|socks5h?|socks4a?):\/\/)?(?:([^:@/\s]+):([^@/\s]+)@)?([^:/@\s]+):(\d+)$/);
   if (!m) return null;
   const protocol = (m[1] || 'http').replace('socks5h', 'socks5').replace('socks4a', 'socks4');
-  return { protocol, host: m[2], port: parseInt(m[3], 10), line: s };
+  return { protocol, host: m[4], port: parseInt(m[5], 10), username: m[2], password: m[3], line: s };
 }
-const proxyLabel = (p) => (p ? `${p.protocol}://${p.host}:${p.port}` : '(direct)');
+const proxyLabel = (p) => (p
+  ? `${p.protocol}://${p.username ? `${encodeURIComponent(p.username)}:***@` : ''}${p.host}:${p.port}`
+  : '(direct)');
 const chromeProxy = (p) => (p ? `${p.protocol}://${p.host}:${p.port}` : null);
 
 function loadExits() {
@@ -541,7 +544,7 @@ async function mint(exits, count, sk) {
       if (!chrome) break;
       let page = null;
       try {
-        page = await Page.open(port);
+        page = await Page.open(port, exit);
         const rec = await mintOnExit(page, exit, sk);
         AUTH = null;
         UID = null;
