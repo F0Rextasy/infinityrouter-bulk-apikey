@@ -497,11 +497,13 @@ const appendKey = (key) => {
 const readDead = () => fs.existsSync(DEAD_FILE)
   ? fs.readFileSync(DEAD_FILE, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
   : [];
-/** Keys that minted but never passed the live gate — retry material, not keys.txt. */
-const appendDead = (key) => {
-  const have = readDead();
-  if (!key || have.includes(key)) return false;
-  fs.appendFileSync(DEAD_FILE, (have.length ? '\n' : '') + key + '\n');
+/** A key the panel refused outright (401/403/quota/ban) is parked in
+ *  keys-dead.txt as `key<TAB>sebep<TAB>ISO` — retry material, never keys.txt.
+ *  A transport failure or a 429 is not a verdict, so that key stays in keys.txt. */
+const appendDead = (key, why) => {
+  const have = readDead().map((l) => l.split('\t')[0]);
+  if (!key || ![401, 402, 403].includes(Number(why)) || have.includes(key)) return false;
+  fs.appendFileSync(DEAD_FILE, `${key}\t${why}\t${new Date().toISOString()}\n`);
   return true;
 };
 const readAccounts = () => { try { return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8')); } catch (e) { return []; } };
@@ -548,7 +550,7 @@ async function mint(exits, count, sk) {
         if (!proof.live) {
           rec.status = 'key-unverified';
           saveAccount(rec);
-          appendDead(rec.key);
+          appendDead(rec.key, proof.models && proof.models.status);
           note('key-unverified');
           log(`  ✖ key not proven: ${JSON.stringify(proof).slice(0, 220)}`);
           continue;
