@@ -96,11 +96,29 @@ curl https://infinityrouter.dev/v1/chat/completions \
 * the account's `access_token` lives only **899 s (~15 min)**, and a re-login needs Turnstile again — the CLI finishes the whole chain in one run instead of resuming it later
 * running the CLI with no pool goes direct; a proxy list makes each account solve and spend on one exit
 
+## 🚀 One command
+
+```bash
+node src/cli.js --count 10
+```
+
+That is the whole tool. One real Chrome clears the Cloudflare Turnstile for you — that step is **automatic** (`--auto`, and it is on by default) — the account is created, its key is minted and every key is proven by a live `chat-200` before it reaches `keys.txt`. A `proxies.txt` next to the repo is picked up automatically (one pinned exit per account); without it the run goes DIRECT.
+
+`--dry` prints the resolved plan — count, pool size, solver availability, model — and exits without touching a single file or making a request:
+
+```bash
+node src/cli.js --dry
+```
+
+Prefer a menu to flags? `npm start` (or `node src/launcher.js`) → **1) Mint keys** → *How many keys? [10]*.
+
+> ⚠️ **Terms & account risk.** This tool automates account creation and API-key issuance against a third-party panel. That may break the panel's Terms of Service and can get accounts, keys or IPs banned. **Automation is your own responsibility**: read the provider's terms, use your own inbox and proxies, and make sure you are allowed to do this where you live before you run it.
+
 ## 🛠 Quick start
 
 ```bash
-# 1) one account + one key, gated end-to-end (real Chrome + Cloudflare Turnstile)
-node src/cli.js --count 1 --pool proxies.txt
+# 1) one account + one key, gated end-to-end (real Chrome + Cloudflare Turnstile, automatic)
+node src/cli.js --count 1 --auto --pool proxies.txt
 
 # 2) re-prove every key already in keys.txt (models + two distinct chats + a get_time tool call)
 node src/cli.js --verify-only
@@ -116,7 +134,7 @@ The `--pool` file is optional: without it the tool runs direct. With it, Chrome 
 
 ### 🖱️ The launcher
 
-`src/launcher.js` (same banner as this README) asks for the few answers the mint needs — how many accounts, the exit list, the gate model — remembers them in `launcher.config.json`, and then runs `src/cli.js`. It is the same CLI, just without memorising flags.
+`npm start` (or `node src/launcher.js`) is the menu form of the same CLI: **1) Mint keys** → *How many keys? [10]* (Enter accepts 10) runs `node src/cli.js --auto --count N`. It never asks about the captcha, a token or a proxy — `proxies.txt` is used automatically when present. If Chrome is missing the menu prints the one-line download command (or a clear error on a headless host), and it ends with a summary table (live/total, latency, error classes) plus the `keys.txt` path; keys that failed the gate land in `keys-dead.txt`.
 
 ## ✅ Verified working — every key is tested
 
@@ -159,6 +177,8 @@ Signup, per account:
 | flag | meaning |
 | --- | --- |
 | `--count N` | accounts (= keys) to mint (default 1) |
+| `--auto` | solve the Cloudflare Turnstile in a real Chrome automatically (**on by default**; `--no-auto` opts out) |
+| `--dry` | print the resolved plan and exit (no accounts, no files, no network) |
 | `--pool FILE` | exit list, one proxy per line (default `proxies.txt` if present; `INFINITYROUTER_POOL`) |
 | `--proxy URL` | a single exit for every request |
 | `--exits K` | exit candidates tried per account (default 3) |
@@ -182,6 +202,8 @@ Your proxy list is **optional** — pass `--pool proxies.txt` and each attempt g
 | --- | --- |
 | `keys.txt` | keys that passed the live gate, one per line |
 | `accounts.json` | account ↔ exit ↔ proof record (written as it goes) |
+| `keys-dead.txt` | keys that minted but never passed the live gate — retry material |
+| `src/solver.js` | the browser + Cloudflare Turnstile engine behind `--auto` |
 | `repo-spec.json` | this packaging spec |
 | `public-cli.js` | mint / verify (node stdlib only) |
 | `out/evidence-20261021.json` | the measured chain: gates, chain, chat, models, re-verifications |
